@@ -510,6 +510,48 @@ impl<const N: u8> Sai<N, (), (), ()> {
     }
 }
 
+impl<const N: u8, Chan, Mclk, TxSync, TxBclk, TxData, RxSync, RxBclk, RxData>
+Sai<N, Mclk, Pins<TxSync, TxBclk, TxData>, Pins<RxSync, RxBclk, RxData>>
+    where
+        Mclk: sai::Pin<consts::Const<N>, Signal = sai::Mclk>,
+        TxSync: sai::Pin<consts::Const<N>, Signal = sai::TxSync>,
+        TxBclk: sai::Pin<consts::Const<N>, Signal = sai::TxBclk>,
+        TxData: sai::Pin<consts::Const<N>>,
+        RxSync: sai::Pin<consts::Const<N>, Signal = sai::RxSync>,
+        RxBclk: sai::Pin<consts::Const<N>, Signal = sai::RxBclk>,
+        RxData: sai::Pin<consts::Const<N>>,
+        Chan: consts::Unsigned,
+        <TxData as sai::Pin<consts::Const<N>>>::Signal: sai::TxDataSignal<Index = Chan>,
+        <RxData as sai::Pin<consts::Const<N>>>::Signal: sai::RxDataSignal<Index = Chan>,
+{
+    /// Create a Sai instance given a set of transmit and receive pins
+    pub fn with_pins(
+        sai: ral::sai::Instance<N>,
+        mut mclk_pin: Mclk,
+        mut tx_pins: Pins<TxSync, TxBclk, TxData>,
+        mut rx_pins: Pins<RxSync, RxBclk, RxData>,
+    ) -> Self {
+        reset(&sai);
+
+        sai::prepare(&mut mclk_pin);
+        sai::prepare(&mut tx_pins.sync);
+        sai::prepare(&mut tx_pins.bclk);
+        sai::prepare(&mut tx_pins.data);
+        sai::prepare(&mut rx_pins.sync);
+        sai::prepare(&mut rx_pins.bclk);
+        sai::prepare(&mut rx_pins.data);
+
+        Sai {
+            sai,
+            _mclk_pin: mclk_pin,
+            tx_pins: Some(tx_pins),
+            rx_pins: Some(rx_pins),
+            tx_chan_mask: 1 << Chan::to_usize(),
+            rx_chan_mask: 1 << Chan::to_usize(),
+        }
+    }
+}
+
 impl<const N: u8, Mclk, TxPins, RxPins> Sai<N, Mclk, TxPins, RxPins> {
     /// Split the Tx/Rx pair from a SAI, with word, frame, and packing options as type parameters
     pub fn split<const WORD_SIZE: u8, const FRAME_SIZE: usize, PACKING: Packing<WORD_SIZE>>(

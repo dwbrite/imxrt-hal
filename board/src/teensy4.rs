@@ -45,6 +45,39 @@ pub type ConsolePins = hal::lpuart::Pins<
     iomuxc::gpio_ad_b1::GPIO_AD_B1_03, // RX, P15
 >;
 
+
+
+// TX_DATA0
+//     GPIO_B1_01
+// TX_DATA1 xor RX_DATA3
+//     GPIO_B0_12
+// TX_DATA2 xor RX_DATA2
+//     GPIO_B0_11
+// TX_DATA3 xor RX_DATA1
+//     GPIO_B0_10
+// RX_DATA0
+//     GPIO_B1_00
+//
+// // SAI1 Clock and Sync
+//
+// TX_BCLK / TX_SYNC nc on 4.0 (generally tied to rx counterparts?) GPIO_B1_02 / GPIO_B1_03 on 4.1
+// RX_BCLK
+//     GPIO_AD_B1_11
+// RX_SYNC
+//     GPIO_AD_B1_10
+// MCLK
+//     GPIO_AD_B1_09
+
+pub type Sai1MclkPin = iomuxc::gpio_ad_b1::GPIO_AD_B1_09;
+
+pub type Sai1TxPins =
+hal::sai::Pins<iomuxc::gpio_b1::GPIO_B1_03, iomuxc::gpio_b1::GPIO_B1_02, iomuxc::gpio_b1::GPIO_B1_01>;
+
+pub type Sai1RxPins =
+hal::sai::Pins<iomuxc::gpio_ad_b1::GPIO_AD_B1_10, iomuxc::gpio_ad_b1::GPIO_AD_B1_11, iomuxc::gpio_b1::GPIO_B1_00>;
+
+pub type Sai1 = hal::sai::Sai<1, Sai1MclkPin, Sai1TxPins, Sai1RxPins>;
+
 pub type SpiPins = hal::lpspi::Pins<
     iomuxc::gpio_b0::GPIO_B0_02, // SDO, P11
     iomuxc::gpio_b0::GPIO_B0_01, // SDI, P12
@@ -61,11 +94,11 @@ pub type Spi = ();
 pub type Spi = hal::lpspi::Lpspi<SpiPins, 4>;
 
 pub type I2cPins = hal::lpi2c::Pins<
-    iomuxc::gpio_ad_b1::GPIO_AD_B1_07, // SCL, P16
-    iomuxc::gpio_ad_b1::GPIO_AD_B1_06, // SDA, P17
+    iomuxc::gpio_ad_b1::GPIO_AD_B1_00, // SCL, P19
+    iomuxc::gpio_ad_b1::GPIO_AD_B1_01, // SDA, P18
 >;
 
-pub type I2c = hal::lpi2c::Lpi2c<I2cPins, 3>;
+pub type I2c = hal::lpi2c::Lpi2c<I2cPins, 1>;
 
 /// PWM components.
 pub mod pwm {
@@ -107,9 +140,10 @@ impl GpioPorts {
 /// Teensy 4 specific peripherals.
 pub struct Specifics {
     pub led: Led,
-    pub button: Button,
+    // pub button: Button,
     pub ports: GpioPorts,
     pub console: Console,
+    pub sai1: Sai1,
     pub spi: Spi,
     pub i2c: I2c,
     pub pwm: Pwm,
@@ -131,7 +165,7 @@ impl Specifics {
         #[cfg(feature = "spi")]
         let led = ();
 
-        let button = gpio2.input(iomuxc.gpio_b1.p01);
+        // let button = gpio2.input(iomuxc.gpio_b1.p01);
 
         let lpuart2 = unsafe { ral::lpuart::LPUART2::instance() };
         let mut console = hal::lpuart::Lpuart::new(
@@ -145,6 +179,24 @@ impl Specifics {
             console.set_baud(&super::CONSOLE_BAUD);
             console.set_parity(None);
         });
+
+        // TODO: feature gate?
+        let sai1 = {
+            let sai1 = unsafe { ral::sai::SAI1::instance() };
+            let tx_pins = Sai1TxPins {
+                sync: iomuxc.gpio_b1.p03,
+                bclk: iomuxc.gpio_b1.p02,
+                data: iomuxc.gpio_b1.p01,
+            };
+            //hal::sai::Pins<iomuxc::gpio_ad_b1::GPIO_AD_B1_10, iomuxc::gpio_ad_b1::GPIO_AD_B1_11, iomuxc::gpio_b1::GPIO_B1_00>;
+
+            let rx_pins = Sai1RxPins {
+                sync: iomuxc.gpio_ad_b1.p10,
+                bclk: iomuxc.gpio_ad_b1.p11,
+                data: iomuxc.gpio_b1.p00, // data 0
+            };
+            Sai1::with_pins(sai1, iomuxc.gpio_ad_b1.p09, tx_pins, rx_pins)
+        };
 
         #[cfg(feature = "spi")]
         let spi = {
@@ -165,12 +217,12 @@ impl Specifics {
         #[allow(clippy::let_unit_value)]
         let spi = ();
 
-        let lpi2c3 = unsafe { ral::lpi2c::LPI2C3::instance() };
+        let lpi2c1 = unsafe { ral::lpi2c::LPI2C1::instance() };
         let i2c = I2c::new(
-            lpi2c3,
+            lpi2c1,
             I2cPins {
-                scl: iomuxc.gpio_ad_b1.p07,
-                sda: iomuxc.gpio_ad_b1.p06,
+                scl: iomuxc.gpio_ad_b1.p00,
+                sda: iomuxc.gpio_ad_b1.p01,
             },
             &super::I2C_BAUD_RATE,
         );
@@ -199,9 +251,10 @@ impl Specifics {
         );
         Self {
             led,
-            button,
+            // button,
             ports: GpioPorts { gpio2 },
             console,
+            sai1,
             spi,
             i2c,
             pwm,
@@ -243,15 +296,15 @@ fn configure_pins(
         .set_speed(iomuxc::Speed::Fast)
         .set_pull_keeper(Some(iomuxc::PullKeeper::Pullup22k));
 
-    iomuxc::configure(&mut gpio_ad_b1.p07, I2C_PIN_CONFIG);
-    iomuxc::configure(&mut gpio_ad_b1.p06, I2C_PIN_CONFIG);
+    iomuxc::configure(&mut gpio_ad_b1.p00, I2C_PIN_CONFIG);
+    iomuxc::configure(&mut gpio_ad_b1.p01, I2C_PIN_CONFIG);
 
-    const BUTTON_CONFIG: iomuxc::Config = iomuxc::Config::zero()
-        .set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k))
-        .set_hysteresis(iomuxc::Hysteresis::Enabled);
+    // const BUTTON_CONFIG: iomuxc::Config = iomuxc::Config::zero()
+    //     .set_pull_keeper(Some(iomuxc::PullKeeper::Pullup100k))
+    //     .set_hysteresis(iomuxc::Hysteresis::Enabled);
 
-    let button: &mut ButtonPad = &mut gpio_b1.p01;
-    iomuxc::configure(button, BUTTON_CONFIG);
+    // let button: &mut ButtonPad = &mut gpio_b1.p01;
+    // iomuxc::configure(button, BUTTON_CONFIG);
 
     const SPI_PIN_CONFIG: iomuxc::Config = iomuxc::Config::zero()
         .set_drive_strength(iomuxc::DriveStrength::R0_4)
